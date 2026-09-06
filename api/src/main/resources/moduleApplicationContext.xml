@@ -264,8 +264,6 @@
 		  class="org.openmrs.module.billing.api.evaluator.ExemptionRuleEngine">
 		<constructor-arg>
 			<list>
-				<bean id="javascriptRuleEvaluator"
-					  class="org.openmrs.module.billing.api.evaluator.impl.JSExemptionEvaluator"/>
 			</list>
 		</constructor-arg>
 	</bean>

@@ -122,8 +122,11 @@ public class BillableServiceResource extends MetadataDelegatingCrudResource<Bill
 			description.addProperty("servicePrices");
 			description.addProperty("serviceStatus");
 		} else if (rep instanceof CustomRepresentation) {
-			// For custom representation, must be null
-			// - let the user decide which properties should be included in the response
+			// Must stay null. BaseDelegatingResource.asRepresentation() treats a null
+			// description for a CustomRepresentation as the signal to build one via
+			// ConversionUtil.getCustomRepresentationDescription(), i.e. from the exact
+			// property list the caller asked for. Returning a fixed description here
+			// would silently ignore that list and break every custom representation.
 			description = null;
 		}
 		return description;

@@ -78,6 +78,17 @@ public class Bill extends BaseOpenmrsData {
 		return total;
 	}
 	
+	/**
+	 * Bill total after discounts. This module version has no discount feature, so it is simply the
+	 * total. The O3 billing frontend derives the displayed discount as total - amountAfterDiscount, and
+	 * the amount due from amountAfterDiscount; without this property it reads undefined, shows a
+	 * full-value discount and reports nothing owing on an unpaid bill. Upstream introduced this in
+	 * module version 2.3.0, where it also subtracts approved discounts.
+	 */
+	public BigDecimal getAmountAfterDiscount() {
+		return getTotal();
+	}
+	
 	public BigDecimal getTotalPayments() {
 		BigDecimal total = BigDecimal.ZERO;
 		

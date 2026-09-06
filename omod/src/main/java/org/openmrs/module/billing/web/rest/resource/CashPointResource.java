@@ -38,7 +38,7 @@ import org.openmrs.module.webservices.rest.web.response.ResponseException;
  * REST resource representing a {@link CashPoint}.
  */
 @Resource(name = RestConstants.VERSION_1 + CashierResourceController.BILLING_NAMESPACE
-        + "/cashPoint", supportedClass = CashPoint.class, supportedOpenmrsVersions = { "2.7.8 - 9.*" })
+        + "/cashPoint", supportedClass = CashPoint.class, supportedOpenmrsVersions = { "2.0 - 2.*" })
 public class CashPointResource extends MetadataDelegatingCrudResource<CashPoint> {
 	
 	private final CashPointService cashPointService = Context.getService(CashPointService.class);
@@ -65,8 +65,11 @@ public class CashPointResource extends MetadataDelegatingCrudResource<CashPoint>
 			description.addProperty("location", Representation.REF);
 			description.addProperty("auditInfo");
 		} else if (rep instanceof CustomRepresentation) {
-			// For custom representation, must be null
-			// - let the user decide which properties should be included in the response
+			// Must stay null. BaseDelegatingResource.asRepresentation() treats a null
+			// description for a CustomRepresentation as the signal to build one via
+			// ConversionUtil.getCustomRepresentationDescription(), i.e. from the exact
+			// property list the caller asked for. Returning a fixed description here
+			// would silently ignore that list and break every custom representation.
 			description = null;
 		}
 		

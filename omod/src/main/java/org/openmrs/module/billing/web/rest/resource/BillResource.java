@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.openmrs.Provider;
 import org.openmrs.User;
@@ -44,6 +45,7 @@ import org.openmrs.module.billing.web.base.resource.PagingUtil;
 import org.openmrs.module.billing.web.rest.controller.base.CashierResourceController;
 import org.openmrs.module.webservices.rest.web.RequestContext;
 import org.openmrs.module.webservices.rest.web.RestConstants;
+import org.openmrs.module.webservices.rest.web.annotation.PropertyGetter;
 import org.openmrs.module.webservices.rest.web.annotation.PropertySetter;
 import org.openmrs.module.webservices.rest.web.annotation.Resource;
 import org.openmrs.module.webservices.rest.web.representation.DefaultRepresentation;
@@ -60,6 +62,7 @@ import org.springframework.web.client.RestClientException;
  */
 @Resource(name = RestConstants.VERSION_1 + CashierResourceController.BILLING_NAMESPACE
         + "/bill", supportedClass = Bill.class, supportedOpenmrsVersions = { "2.0 - 2.*" })
+@Slf4j
 public class BillResource extends DataDelegatingCrudResource<Bill> {
 	
 	@Override
@@ -77,6 +80,11 @@ public class BillResource extends DataDelegatingCrudResource<Bill> {
 			description.addProperty("receiptNumber");
 			description.addProperty("status");
 			description.addProperty("adjustmentReason");
+			// Bill.getTotal() has always existed on the model but was never published, so the O3
+			// billing frontend read undefined and rendered "NGN undefined" / "NGN NaN" on invoices.
+			// Upstream exposes this from module version 2.3.0; matching that field name here.
+			description.addProperty("total");
+			description.addProperty("amountAfterDiscount");
 			description.addProperty("uuid");
 			return description;
 		}
@@ -85,7 +93,12 @@ public class BillResource extends DataDelegatingCrudResource<Bill> {
 	
 	@Override
 	public DelegatingResourceDescription getCreatableProperties() {
-		return getRepresentationDescription(new DefaultRepresentation());
+		DelegatingResourceDescription description = getRepresentationDescription(new DefaultRepresentation());
+		// "visit" must be whitelisted here or RESTWS rejects the request with
+		// "Some properties are not allowed to be set: visit" before any setter runs. It is accepted
+		// and discarded by setVisitIgnored; see that method for why this version cannot persist it.
+		description.addProperty("visit");
+		return description;
 	}
 	
 	@PropertySetter("lineItems")
@@ -133,6 +146,33 @@ public class BillResource extends DataDelegatingCrudResource<Bill> {
 		if (instance.getBillAdjusted().getUuid() != null) {
 			instance.getBillAdjusted().setAdjustmentReason(adjustReason);
 		}
+	}
+	
+	/**
+	 * Accepts and discards "visit". Bill/visit association was added upstream in module version 2.3.0
+	 * and needs a cashier_bill.visit column that this version does not have. The O3 billing frontend
+	 * sends it regardless. This setter discards the value; see getVisitIgnored below, which is what
+	 * actually allows the request through. The visit link is simply not persisted, exactly as before
+	 * the frontend started sending it.
+	 */
+	@PropertySetter("visit")
+	public void setVisitIgnored(Bill instance, Object visit) {
+		if (visit != null) {
+			log.debug("Ignoring 'visit' on bill create; not supported before module version 2.3.0");
+		}
+	}
+	
+	/**
+	 * Paired with {@link #setVisitIgnored}, and required for it to ever run. RESTWS
+	 * BaseDelegatingResource.setConvertedProperties reads each submitted property's current value via
+	 * getProperty before setting it, and getProperty throws "ConversionException: Unknown property
+	 * 'visit'" for a property that has no getter - failing the whole request with a 400 before the
+	 * setter is reached. Returning null here lets that read succeed so the no-op setter can discard the
+	 * value. Verified against RESTWS 2.50.0.
+	 */
+	@PropertyGetter("visit")
+	public Object getVisitIgnored(Bill instance) {
+		return null;
 	}
 	
 	@Override

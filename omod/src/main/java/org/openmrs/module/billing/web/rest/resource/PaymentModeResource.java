@@ -37,7 +37,7 @@ import org.openmrs.module.webservices.rest.web.response.ResponseException;
  * REST resource representing a {@link PaymentMode}.
  */
 @Resource(name = RestConstants.VERSION_1 + CashierResourceController.BILLING_NAMESPACE
-        + "/paymentMode", supportedClass = PaymentMode.class, supportedOpenmrsVersions = { "2.7.8 - 9.*" })
+        + "/paymentMode", supportedClass = PaymentMode.class, supportedOpenmrsVersions = { "2.0 - 2.*" })
 public class PaymentModeResource extends MetadataDelegatingCrudResource<PaymentMode> {
 	
 	private final PaymentModeService paymentModeService = Context.getService(PaymentModeService.class);
@@ -54,8 +54,11 @@ public class PaymentModeResource extends MetadataDelegatingCrudResource<PaymentM
 			description.addProperty("sortOrder");
 			description.addProperty("attributeTypes", Representation.REF);
 		} else if (rep instanceof CustomRepresentation) {
-			// For custom representation, must be null
-			// - let the user decide which properties should be included in the response
+			// Must stay null. BaseDelegatingResource.asRepresentation() treats a null
+			// description for a CustomRepresentation as the signal to build one via
+			// ConversionUtil.getCustomRepresentationDescription(), i.e. from the exact
+			// property list the caller asked for. Returning a fixed description here
+			// would silently ignore that list and break every custom representation.
 			return null;
 		}
 		return description;

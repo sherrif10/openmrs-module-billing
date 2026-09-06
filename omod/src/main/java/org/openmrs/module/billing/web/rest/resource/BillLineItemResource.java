@@ -25,6 +25,7 @@ import org.openmrs.module.billing.api.model.BillableService;
 import org.openmrs.module.billing.api.model.CashierItemPrice;
 import org.openmrs.module.billing.api.base.entity.IEntityDataService;
 import org.openmrs.module.billing.api.model.Bill;
+import org.openmrs.module.billing.api.model.BillStatus;
 import org.openmrs.module.billing.api.model.BillLineItem;
 import org.openmrs.module.stockmanagement.api.StockManagementService;
 import org.openmrs.module.stockmanagement.api.model.StockItem;
@@ -60,6 +61,7 @@ public class BillLineItemResource extends BaseRestDataResource<BillLineItem> {
 			description.addProperty("priceUuid");
 			description.addProperty("lineItemOrder");
 			description.addProperty("paymentStatus");
+			description.addProperty("status");
 			return description;
 		}
 		return null;
@@ -176,5 +178,31 @@ public class BillLineItemResource extends BaseRestDataResource<BillLineItem> {
 		lineItem.setVoidedBy(Context.getAuthenticatedUser());
 		
 		Context.getService(BillService.class).saveBill(lineItem.getBill());
+	}
+	
+	/**
+	 * Accepts "status" as an alias for "paymentStatus". Upstream renamed this property in module
+	 * version 2.3.0 and the O3 billing frontend now sends "status". This module version still stores it
+	 * as paymentStatus, so translate between the two rather than reject the request.
+	 */
+	@PropertySetter(value = "status")
+	public void setStatusAlias(BillLineItem instance, Object status) {
+		if (status == null) {
+			return;
+		}
+		if (status instanceof BillStatus) {
+			instance.setPaymentStatus((BillStatus) status);
+			return;
+		}
+		String raw = status.toString().trim();
+		if (raw.isEmpty()) {
+			return;
+		}
+		instance.setPaymentStatus(BillStatus.valueOf(raw.toUpperCase()));
+	}
+	
+	@PropertyGetter(value = "status")
+	public BillStatus getStatusAlias(BillLineItem instance) {
+		return instance.getPaymentStatus();
 	}
 }
