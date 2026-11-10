@@ -1,17 +1,18 @@
 package org.openmrs.module.billing.api.db.hibernate;
 
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
-import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
+import org.openmrs.Location;
 import org.openmrs.Patient;
+import org.openmrs.User;
 import org.openmrs.api.context.Context;
 import org.openmrs.api.db.hibernate.HibernatePatientDAO;
+import org.openmrs.module.billing.api.CashPointService;
 import org.openmrs.module.billing.api.base.PagingInfo;
 import org.openmrs.module.billing.api.db.BillDAO;
 import org.openmrs.module.billing.api.model.Bill;
+import org.openmrs.module.billing.api.model.CashPoint;
 import org.openmrs.module.billing.api.search.BillSearch;
 
 import javax.annotation.Nonnull;
@@ -27,16 +28,26 @@ import static org.openmrs.module.billing.api.db.hibernate.PagingUtil.applyPaging
 
 /**
  * Hibernate implementation of {@link BillDAO}.
+ * <p>
+ * MediHealth patch of billing 2.1.4 (2026-10-27): bill lists (search and per patient) only show bills of the cash
+ * points at the user's session location, when that location has cash points and the user is not a superuser, so
+ * each PHC sees its own bills.
  *
  * @see BillDAO
  * @see Bill
  */
-@AllArgsConstructor
 public class HibernateBillDAO implements BillDAO {
-	
-	@Setter(AccessLevel.PROTECTED)
+
 	private SessionFactory sessionFactory;
-	
+
+	public HibernateBillDAO(SessionFactory sessionFactory) {
+		this.sessionFactory = sessionFactory;
+	}
+
+	protected void setSessionFactory(SessionFactory sessionFactory) {
+		this.sessionFactory = sessionFactory;
+	}
+
 	/**
 	 * {@inheritDoc}
 	 */
@@ -44,7 +55,7 @@ public class HibernateBillDAO implements BillDAO {
 	public Bill getBill(@Nonnull Integer id) {
 		return sessionFactory.getCurrentSession().find(Bill.class, id);
 	}
-	
+
 	/**
 	 * {@inheritDoc}
 	 */
@@ -55,7 +66,7 @@ public class HibernateBillDAO implements BillDAO {
 		query.setParameter("uuid", uuid);
 		return query.getResultStream().findFirst().orElse(null);
 	}
-	
+
 	/**
 	 * {@inheritDoc}
 	 */
@@ -66,56 +77,56 @@ public class HibernateBillDAO implements BillDAO {
 		query.setParameter("receiptNumber", receiptNumber);
 		return query.getResultStream().findFirst().orElse(null);
 	}
-	
+
 	/**
 	 * {@inheritDoc}
 	 */
 	@Override
 	public List<Bill> getBillsByPatientUuid(@Nonnull String patientUuid, PagingInfo pagingInfo) {
 		Session session = sessionFactory.getCurrentSession();
-		
+
 		CriteriaBuilder cb = session.getCriteriaBuilder();
 		CriteriaQuery<Bill> cq = cb.createQuery(Bill.class);
 		Root<Bill> root = cq.from(Bill.class);
-		
-		Predicate predicate = cb.equal(root.get("patient").get("uuid"), patientUuid);
-		cq.where(predicate);
-		cq.orderBy(cb.desc(root.get("dateCreated")));
-		
-		TypedQuery<Bill> query = session.createQuery(cq);
-		
+
 		List<Predicate> predicates = new ArrayList<>();
-		predicates.add(predicate);
+		predicates.add(cb.equal(root.get("patient").get("uuid"), patientUuid));
+		addSessionLocationPredicate(root, predicates);
+		cq.where(predicates.toArray(new Predicate[0]));
+		cq.orderBy(cb.desc(root.get("dateCreated")));
+
+		TypedQuery<Bill> query = session.createQuery(cq);
+
 		applyPaging(query, pagingInfo, predicates, sessionFactory, Bill.class);
-		
+
 		return query.getResultList();
 	}
-	
+
 	/**
 	 * {@inheritDoc}
 	 */
 	@Override
 	public List<Bill> getBills(@Nonnull BillSearch billSearch, PagingInfo pagingInfo) {
 		Session session = sessionFactory.getCurrentSession();
-		
+
 		CriteriaBuilder cb = session.getCriteriaBuilder();
 		CriteriaQuery<Bill> cq = cb.createQuery(Bill.class);
 		Root<Bill> root = cq.from(Bill.class);
-		
+
 		List<Predicate> predicates = buildBillSearchPredicate(cb, root, billSearch);
-		
+
 		if (!predicates.isEmpty()) {
 			cq.where(predicates.toArray(new Predicate[0]));
 		}
 		cq.orderBy(cb.desc(root.get("dateCreated")));
-		
+
 		TypedQuery<Bill> query = session.createQuery(cq);
-		
+
 		applyPaging(query, pagingInfo, predicates, sessionFactory, Bill.class);
-		
+
 		return query.getResultList();
 	}
-	
+
 	/**
 	 * {@inheritDoc}
 	 */
@@ -124,7 +135,7 @@ public class HibernateBillDAO implements BillDAO {
 		sessionFactory.getCurrentSession().saveOrUpdate(bill);
 		return bill;
 	}
-	
+
 	/**
 	 * {@inheritDoc}
 	 */
@@ -132,14 +143,14 @@ public class HibernateBillDAO implements BillDAO {
 	public void purgeBill(@Nonnull Bill bill) {
 		sessionFactory.getCurrentSession().remove(bill);
 	}
-	
+
 	private List<Predicate> buildBillSearchPredicate(CriteriaBuilder cb, Root<Bill> root, BillSearch billSearch) {
 		List<Predicate> predicates = new ArrayList<>();
-		
+
 		if (billSearch.getPatientUuid() != null) {
 			predicates.add(cb.equal(root.get("patient").get("uuid"), billSearch.getPatientUuid()));
 		}
-		
+
 		if (billSearch.getPatientName() != null && !billSearch.getPatientName().trim().isEmpty()) {
 			List<Patient> matchingPatients = Context.getRegisteredComponent("patientDAO", HibernatePatientDAO.class)
 			        .getPatients(billSearch.getPatientName(), 0, null);
@@ -149,24 +160,46 @@ public class HibernateBillDAO implements BillDAO {
 				predicates.add(cb.disjunction());
 			}
 		}
-		
+
 		if (StringUtils.isNotEmpty(billSearch.getCashierUuid())) {
 			predicates.add(cb.equal(root.get("cashier").get("uuid"), billSearch.getCashierUuid()));
 		}
-		
+
 		if (billSearch.getCashPointUuid() != null) {
 			predicates.add(cb.equal(root.get("cashPoint").get("uuid"), billSearch.getCashPointUuid()));
 		}
-		
+
 		if (billSearch.getStatuses() != null && !billSearch.getStatuses().isEmpty()) {
 			predicates.add(root.get("status").in(billSearch.getStatuses()));
 		}
-		
+
 		if (!Boolean.TRUE.equals(billSearch.getIncludeVoided())) {
 			predicates.add(cb.equal(root.get("voided"), false));
 		}
-		
+
+		addSessionLocationPredicate(root, predicates);
+
 		return predicates;
 	}
-	
+
+	/**
+	 * Only bills of the cash points at the session location (or its nearest parent with cash points); nothing is
+	 * added for superusers or when no such cash point exists.
+	 */
+	private void addSessionLocationPredicate(Root<Bill> root, List<Predicate> predicates) {
+		User user = Context.getAuthenticatedUser();
+		if (user == null || user.isSuperUser()) {
+			return;
+		}
+		List<CashPoint> cashPoints = new ArrayList<>();
+		CashPointService cashPointService = Context.getService(CashPointService.class);
+		for (Location l = Context.getUserContext().getLocation(); l != null && cashPoints.isEmpty(); l = l
+		        .getParentLocation()) {
+			cashPoints.addAll(cashPointService.getCashPointsByLocation(l, true));
+		}
+		if (!cashPoints.isEmpty()) {
+			predicates.add(root.get("cashPoint").in(cashPoints));
+		}
+	}
+
 }
