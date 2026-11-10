@@ -161,6 +161,8 @@
 		<property name="priceName" type="java.lang.String" column="price_name" length="255"/>
 		<property name="quantity" type="int" column="quantity" not-null="true"/>
 		<property name="lineItemOrder" type="int" column="line_item_order"/>
+		<!-- the order this line bills; the column exists since the order_id changeset (MediHealth 2026-11-10: it was not mapped, so it was never saved) -->
+		<many-to-one name="order" class="org.openmrs.Order" column="order_id" not-null="false"/>
 		<property name="paymentStatus" column="payment_status" not-null="true">
 			<type name="org.hibernate.type.EnumType">
 				<param name="enumClass">org.openmrs.module.billing.api.model.BillStatus</param>

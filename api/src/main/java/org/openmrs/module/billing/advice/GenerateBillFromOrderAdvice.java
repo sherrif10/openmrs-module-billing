@@ -42,31 +42,38 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * MediHealth patch of billing 2.1.4 (2026-10-27): 1) a bill made from an order goes to a cash point at the order's
- * location (Pharmacy for drugs, Laboratory for tests) instead of the first cash point of the system; 2) a drug with
- * no stock item is billed through the enabled billable service of its concept, as test orders are.
- * 2026-11-05: the automatic bill is made with the privileges below for the duration of this advice only, so orders
- * signed by OPD/records users (who lack them) are billed too; before, the stock lookup failed and no bill was made.
+ * MediHealth patch of billing 2.1.4 (2026-10-27): 1) a bill made from an order goes to a cash point
+ * at the order's location (Pharmacy for drugs, Laboratory for tests) instead of the first cash
+ * point of the system; 2) a drug with no stock item is billed through the enabled billable service
+ * of its concept, as test orders are. 2026-11-05: the automatic bill is made with the privileges
+ * below for the duration of this advice only, so orders signed by OPD/records users (who lack them)
+ * are billed too; before, the stock lookup failed and no bill was made.
  */
 public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
-
+	
 	private static final Logger log = LoggerFactory.getLogger(GenerateBillFromOrderAdvice.class);
-
-	private static final String[] BILLING_PRIVILEGES = { "App: stockmanagement.stockItems", "View Cashier Bills",
+	
+	/**
+	 * Global property: "false" stops automatic bills for drug orders (pharmacy generates them; lab
+	 * orders still bill).
+	 */
+	public static final String GP_AUTO_BILL_DRUG_ORDERS = "billing.autoBillDrugOrders";
+	
+	static final String[] BILLING_PRIVILEGES = { "App: stockmanagement.stockItems", "View Cashier Bills",
 	        "Manage Cashier Bills", "View Cashier Metadata", "Manage Cashier Metadata" };
-
+	
 	final BillService billService = Context.getService(BillService.class);
-
+	
 	final StockManagementService stockService = Context.getService(StockManagementService.class);
-
+	
 	final ItemPriceService priceService = Context.getService(ItemPriceService.class);
-
+	
 	final CashPointService cashPointService = Context.getService(CashPointService.class);
-
+	
 	final ExemptionRuleEngine exemptionRuleEngine = Context.getRegisteredComponent("ruleEngine", ExemptionRuleEngine.class);
-
+	
 	final BillExemptionService billExemptionService = Context.getService(BillExemptionService.class);
-
+	
 	/**
 	 * This is called immediately an order is saved
 	 */
@@ -79,23 +86,27 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 			ProgramWorkflowService workflowService = Context.getProgramWorkflowService();
 			if (method.getName().equals("saveOrder") && args.length > 0 && args[0] instanceof Order) {
 				Order order = (Order) args[0];
-
+				
 				// Check if the order is a discontinuation, revision, or renewal
 				if (order.getAction().equals(Order.Action.DISCONTINUE) || order.getAction().equals(Order.Action.REVISE)
 				        || order.getAction().equals(Order.Action.RENEW)) {
 					// Do nothing for these actions
 					return;
 				}
-
+				
 				Patient patient = order.getPatient();
 				String cashierUUID = Context.getAuthenticatedUser().getUuid();
-
+				
+				if (order instanceof DrugOrder && !autoBillDrugOrders()) {
+					// the pharmacy generates the drug bill from the Dispensing screen
+					return;
+				}
 				if (order instanceof DrugOrder) {
 					DrugOrder drugOrder = (DrugOrder) order;
 					Integer drugID = drugOrder.getDrug() != null ? drugOrder.getDrug().getDrugId() : 0;
 					double drugQuantity = drugOrder.getQuantity() != null ? drugOrder.getQuantity() : 0.0;
 					List<StockItem> stockItems = stockService.getStockItemByDrug(drugID);
-
+					
 					if (!stockItems.isEmpty()) {
 						// check from the list for all exemptions
 						boolean isExempted = checkIfOrderIsExempted(workflowService, order, ExemptionType.COMMODITY);
@@ -116,7 +127,7 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 					BillableServiceSearch searchTemplate = new BillableServiceSearch();
 					searchTemplate.setConceptUuid(testOrder.getConcept().getUuid());
 					searchTemplate.setServiceStatus(BillableServiceStatus.ENABLED);
-
+					
 					BillableServiceService service = Context.getService(BillableServiceService.class);
 					List<BillableService> searchResult = service.getBillableServices(searchTemplate, null);
 					if (!searchResult.isEmpty()) {
@@ -137,19 +148,25 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 			}
 		}
 	}
-
+	
+	/** True unless the global property {@link #GP_AUTO_BILL_DRUG_ORDERS} is "false". */
+	static boolean autoBillDrugOrders() {
+		return !"false".equalsIgnoreCase(Context.getAdministrationService().getGlobalProperty(GP_AUTO_BILL_DRUG_ORDERS));
+	}
+	
 	/**
-	 * The enabled billable service of the drug's concept: the one named like the drug, otherwise the only one.
+	 * The enabled billable service of the drug's concept: the one named like the drug, otherwise the
+	 * only one.
 	 */
-	private BillableService findDrugService(DrugOrder drugOrder) {
+	BillableService findDrugService(DrugOrder drugOrder) {
 		if (drugOrder.getDrug() == null || drugOrder.getDrug().getConcept() == null) {
 			return null;
 		}
 		BillableServiceSearch searchTemplate = new BillableServiceSearch();
 		searchTemplate.setConceptUuid(drugOrder.getDrug().getConcept().getUuid());
 		searchTemplate.setServiceStatus(BillableServiceStatus.ENABLED);
-		List<BillableService> services = Context.getService(BillableServiceService.class)
-		        .getBillableServices(searchTemplate, null);
+		List<BillableService> services = Context.getService(BillableServiceService.class).getBillableServices(searchTemplate,
+		    null);
 		String drugName = drugOrder.getDrug().getName();
 		for (BillableService s : services) {
 			if (s.getName() != null && drugName != null && s.getName().trim().equalsIgnoreCase(drugName.trim())) {
@@ -158,12 +175,13 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 		}
 		return services.size() == 1 ? services.get(0) : null;
 	}
-
+	
 	/**
-	 * A cash point at the order's location (the encounter's, else the session's): the "Pharmacy" one for drugs, the
-	 * "Laboratory" one for tests, else any at that location; the first cash point of the system if the location has none.
+	 * A cash point at the order's location (the encounter's, else the session's): the "Pharmacy" one
+	 * for drugs, the "Laboratory" one for tests, else any at that location; the first cash point of the
+	 * system if the location has none.
 	 */
-	private CashPoint findCashPoint(Order order) {
+	CashPoint findCashPoint(Order order) {
 		List<CashPoint> cashPoints = cashPointService.getAllCashPoints(false);
 		Location location = order.getEncounter() != null ? order.getEncounter().getLocation() : null;
 		if (location == null) {
@@ -189,57 +207,56 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 		}
 		return cashPoints.get(0);
 	}
-
-	private boolean checkIfOrderIsExempted(ProgramWorkflowService workflowService, Order order,
-	        ExemptionType exemptionType) {
+	
+	boolean checkIfOrderIsExempted(ProgramWorkflowService workflowService, Order order, ExemptionType exemptionType) {
 		if (order == null || order.getConcept() == null) {
 			return false;
 		}
 		List<BillExemption> exemptions = billExemptionService.getExemptionsByConcept(order.getConcept(), exemptionType,
 		    false);
-
+		
 		if (exemptions == null || exemptions.isEmpty()) {
 			return false;
 		}
-
+		
 		Map<String, Object> variables = buildVariablesMap(order, workflowService);
-
+		
 		for (BillExemption exemption : exemptions) {
 			if (exemptionRuleEngine.isExemptionApplicable(exemption, variables)) {
 				return true;
 			}
 		}
-
+		
 		return false;
 	}
-
+	
 	private Map<String, Object> buildVariablesMap(Order order, ProgramWorkflowService workflowService) {
 		Map<String, Object> variables = new HashMap<>();
-
+		
 		Patient patient = order.getPatient();
 		variables.put("patient", patient);
 		// We cannot call getAge() method from Java Script
 		if (patient != null) {
 			variables.put("patientAge", patient.getAge());
 		}
-
+		
 		Map<String, Object> orderData = new HashMap<>();
 		orderData.put("uuid", order.getUuid());
 		if (order.getConcept() != null) {
 			orderData.put("conceptId", order.getConcept().getConceptId());
 		}
 		variables.put("order", orderData);
-
+		
 		List<PatientProgram> programs = workflowService.getPatientPrograms(patient, null, null, null, new Date(), null,
 		    false);
 		List<String> activePrograms = programs.stream().filter(PatientProgram::getActive)
 		        .map(pp -> pp.getProgram().getName()).collect(Collectors.toList());
-
+		
 		variables.put("activePrograms", activePrograms);
-
+		
 		return variables;
 	}
-
+	
 	/**
 	 * Adds a bill item to the cashier module
 	 *
@@ -262,7 +279,7 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 				billLineItem.setBillableService(service);
 				itemPrices = priceService.getServicePrice(service);
 			}
-
+			
 			if (!itemPrices.isEmpty()) {
 				billLineItem.setPrice(itemPrices.get(0).getPrice());
 			} else {
@@ -276,11 +293,11 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 			billLineItem.setPaymentStatus(lineItemStatus);
 			billLineItem.setLineItemOrder(0);
 			billLineItem.setOrder(order);
-
+			
 			// Bill
 			User user = Context.getAuthenticatedUser();
 			List<Provider> providers = new ArrayList<>(Context.getProviderService().getProvidersByPerson(user.getPerson()));
-
+			
 			if (!providers.isEmpty()) {
 				activeBill.setCashier(providers.get(0));
 				activeBill.setCashPoint(findCashPoint(order));
@@ -290,7 +307,7 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 			} else {
 				log.error("User is not a provider");
 			}
-
+			
 		}
 		catch (Exception ex) {
 			log.error("Error sending the bill item: {}", ex.getMessage(), ex);
