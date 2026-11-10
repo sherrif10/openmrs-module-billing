@@ -45,10 +45,15 @@ import java.util.stream.Collectors;
  * MediHealth patch of billing 2.1.4 (2026-10-27): 1) a bill made from an order goes to a cash point at the order's
  * location (Pharmacy for drugs, Laboratory for tests) instead of the first cash point of the system; 2) a drug with
  * no stock item is billed through the enabled billable service of its concept, as test orders are.
+ * 2026-11-05: the automatic bill is made with the privileges below for the duration of this advice only, so orders
+ * signed by OPD/records users (who lack them) are billed too; before, the stock lookup failed and no bill was made.
  */
 public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 
 	private static final Logger log = LoggerFactory.getLogger(GenerateBillFromOrderAdvice.class);
+
+	private static final String[] BILLING_PRIVILEGES = { "App: stockmanagement.stockItems", "View Cashier Bills",
+	        "Manage Cashier Bills", "View Cashier Metadata", "Manage Cashier Metadata" };
 
 	final BillService billService = Context.getService(BillService.class);
 
@@ -67,6 +72,9 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 	 */
 	@Override
 	public void afterReturning(Object returnValue, Method method, Object[] args, Object target) {
+		for (String privilege : BILLING_PRIVILEGES) {
+			Context.addProxyPrivilege(privilege);
+		}
 		try {
 			ProgramWorkflowService workflowService = Context.getProgramWorkflowService();
 			if (method.getName().equals("saveOrder") && args.length > 0 && args[0] instanceof Order) {
@@ -122,6 +130,11 @@ public class GenerateBillFromOrderAdvice implements AfterReturningAdvice {
 		}
 		catch (Exception e) {
 			log.error("Error intercepting order before creation: {}", e.getMessage(), e);
+		}
+		finally {
+			for (String privilege : BILLING_PRIVILEGES) {
+				Context.removeProxyPrivilege(privilege);
+			}
 		}
 	}
 
