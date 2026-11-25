@@ -43,6 +43,18 @@
   .pill.REVERSED { background:var(--bad-bg); color:var(--bad); }
   .hidden { display:none; }
   code { background:#f2f4f8; padding:1px 5px; font-size:12px; }
+  h3 { font-size:13px; margin:18px 0 6px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  table.map th, table.map td, table.list th, table.list td { width:auto; background:none; }
+  table.map thead th, table.list thead th { background:#fafafa; color:var(--muted); font-weight:500; }
+  table.map input { padding:6px 8px; }
+  table.list tbody tr { cursor:pointer; } table.list tbody tr:hover { background:#edf5f5; }
+  .num { text-align:right; white-space:nowrap; }
+  .small { font-size:12px; color:var(--muted); }
+  ul.issues { margin:8px 0 0; padding-left:20px; } ul.issues li { margin:3px 0; }
+  ul.issues.bad li { color:var(--bad); } ul.issues.warn li { color:var(--wait); }
+  .scroll { overflow-x:auto; }
+  pre { background:#f2f4f8; padding:12px; font-size:12px; overflow-x:auto; white-space:pre-wrap; word-break:break-all; }
+  details summary { cursor:pointer; color:var(--brand); margin-top:14px; }
 </style>
 </head>
 <body>
@@ -79,6 +91,38 @@
     <div class="card hidden" id="detailsCard">
       <h2>What Pay1 answered</h2>
       <table id="details"></table>
+    </div>
+
+    <div class="card">
+      <h2>Departments and terminals</h2>
+      <p class="hint">Every bill line sent to Pay1 must name a Pay1 department, and every PHC needs its Pay1 terminal ID.
+        Pay1 gives these when MediHealth is onboarded. Pick from Pay1's list or type the name exactly as Pay1 gave it.</p>
+      <div id="mapMsg" class="msg"></div>
+      <div id="mapBody" class="hidden">
+        <h3>Our service types → Pay1 department</h3>
+        <div class="scroll"><table class="map" id="typesTable"></table></div>
+        <div class="grid" style="margin-top:12px">
+          <div><label for="defaultDepartment">Pay1 department for anything not listed above (optional)</label><input id="defaultDepartment" list="pay1Depts"></div>
+          <div><label for="channelName">Channel name sent to Pay1</label><input id="channelName"></div>
+        </div>
+        <h3>PHCs → Pay1 terminal ID</h3>
+        <div class="scroll"><table class="map" id="phcTable"></table></div>
+        <datalist id="pay1Depts"></datalist>
+        <div class="row"><button id="saveMapBtn">Save departments and terminals</button></div>
+        <div id="saveMapMsg" class="msg"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Preview a bill for Pay1</h2>
+      <p class="hint">Shows exactly what MediHealth would send to Pay1 for a bill, and anything missing. <b>Nothing is sent.</b></p>
+      <div class="grid">
+        <div><label for="billQ">Receipt number or patient name (empty = latest bills)</label><input id="billQ" autocomplete="off"></div>
+        <div style="align-self:end"><button id="billsBtn" class="secondary">Find bills</button></div>
+      </div>
+      <div id="billsMsg" class="msg"></div>
+      <div class="scroll"><table class="list hidden" id="billsTable"></table></div>
+      <div id="preview" class="hidden"></div>
     </div>
 
     <div class="card">
@@ -145,6 +189,7 @@
   call('GET', '/settings').then(function (s) {
     $('app').classList.remove('hidden');
     fill(s);
+    loadMapping();
   }).catch(function (e) {
     if (e && e.login) return fail(e);
     $('denied').classList.remove('hidden');
@@ -210,6 +255,84 @@
     }).catch(function (e) { fail(e, $('lookupMsg')); }).then(function () { busy(false); });
   };
   $('reference').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('lookupBtn').click(); });
+
+  // ---- Step 2: departments, terminals, preview ----
+  function money(v) { return v == null ? '' : Number(v).toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); }
+  function loadMapping() {
+    $('mapMsg').className = 'msg'; $('mapMsg').textContent = 'Loading…';
+    call('GET', '/mapping').then(function (m) {
+      $('mapMsg').textContent = m.pay1Departments ? '' :
+        'Could not read Pay1\'s department list (' + ((m.pay1Check && m.pay1Check.error) || 'no connection') + '); you can still type the names.';
+      $('pay1Depts').innerHTML = (m.pay1Departments || []).map(function (d) { return '<option value="' + esc(d) + '">'; }).join('');
+      $('typesTable').innerHTML = '<thead><tr><th>Our service type</th><th class="num">Priced services</th><th>Pay1 department</th></tr></thead><tbody>' +
+        m.types.map(function (t) {
+          return '<tr><td>' + esc(t.label) + '</td><td class="num">' + (t.services == null ? '<span class="small">stock items</span>' : esc(t.services)) +
+            '</td><td><input data-type="' + esc(t.key) + '" list="pay1Depts" value="' + esc(t.pay1Department || '') + '" placeholder="not mapped"></td></tr>';
+        }).join('') + '</tbody>';
+      $('phcTable').innerHTML = '<thead><tr><th>PHC</th><th>Cash points</th><th>Pay1 terminal ID</th></tr></thead><tbody>' +
+        m.phcs.map(function (p) {
+          return '<tr><td>' + esc(p.name) + '</td><td class="small">' + esc(p.cashPoints.join(', ')) +
+            '</td><td><input data-phc="' + esc(p.uuid) + '" value="' + esc(p.terminalId || '') + '" placeholder="not set"></td></tr>';
+        }).join('') + '</tbody>';
+      $('defaultDepartment').value = m.defaultDepartment || '';
+      $('channelName').value = m.channelName || '';
+      $('mapBody').classList.remove('hidden');
+    }).catch(function (e) { fail(e, $('mapMsg')); });
+  }
+  $('saveMapBtn').onclick = function () {
+    var departments = {}, terminals = {};
+    document.querySelectorAll('input[data-type]').forEach(function (i) { if (i.value.trim()) departments[i.getAttribute('data-type')] = i.value.trim(); });
+    document.querySelectorAll('input[data-phc]').forEach(function (i) { if (i.value.trim()) terminals[i.getAttribute('data-phc')] = i.value.trim(); });
+    $('saveMapBtn').disabled = true; $('saveMapMsg').textContent = '';
+    call('POST', '/mapping', { departments: departments, terminals: terminals, defaultDepartment: $('defaultDepartment').value, channelName: $('channelName').value })
+      .then(function () { $('saveMapMsg').className = 'msg ok'; $('saveMapMsg').textContent = 'Saved.'; loadMapping(); })
+      .catch(function (e) { fail(e, $('saveMapMsg')); })
+      .then(function () { $('saveMapBtn').disabled = false; });
+  };
+
+  $('billsBtn').onclick = function () {
+    $('billsMsg').textContent = ''; $('billsTable').classList.add('hidden'); $('preview').classList.add('hidden');
+    call('GET', '/bills?q=' + encodeURIComponent($('billQ').value)).then(function (list) {
+      if (!list.length) { $('billsMsg').className = 'msg bad'; $('billsMsg').textContent = 'No bills found'; return; }
+      $('billsTable').innerHTML = '<thead><tr><th>Receipt</th><th>Patient</th><th>Cash point</th><th>Status</th><th class="num">Total (₦)</th><th>Date</th></tr></thead><tbody>' +
+        list.map(function (b) {
+          return '<tr data-bill="' + esc(b.uuid) + '"><td>' + esc(b.receiptNumber) + '</td><td>' + esc(b.patient) + '</td><td>' + esc(b.cashPoint) +
+            '</td><td>' + esc(b.status) + '</td><td class="num">' + money(b.total) + '</td><td class="small">' + esc(b.dateCreated ? new Date(b.dateCreated).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '') + '</td></tr>';
+        }).join('') + '</tbody>';
+      $('billsTable').classList.remove('hidden');
+      document.querySelectorAll('tr[data-bill]').forEach(function (tr) { tr.onclick = function () { preview(tr.getAttribute('data-bill')); }; });
+    }).catch(function (e) { fail(e, $('billsMsg')); });
+  };
+  $('billQ').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('billsBtn').click(); });
+
+  function preview(uuid) {
+    var box = $('preview');
+    box.className = ''; box.innerHTML = '<p class="small">Building the preview…</p>';
+    call('GET', '/preview?bill=' + encodeURIComponent(uuid)).then(function (p) {
+      var r = p.pay1Request, meta = r.customerMeta || {};
+      var html = '<h3>Bill ' + esc(p.receiptNumber) + '</h3>' +
+        '<div class="status card ' + (p.ready ? 'ok' : 'bad') + '" style="margin:0 0 12px"><div class="dot"></div><div><b>' +
+        (p.ready ? 'Ready to send to Pay1' : 'Not ready: ' + p.problems.length + ' thing' + (p.problems.length === 1 ? '' : 's') + ' to fix') +
+        '</b><span>Preview only, nothing was sent.</span></div></div>';
+      if (p.problems.length) html += '<ul class="issues bad">' + p.problems.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+      if (p.warnings.length) html += '<ul class="issues warn">' + p.warnings.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+      html += '<table>' + [
+        ['Invoice ID', esc(r.invoiceID)], ['Customer', esc(meta.customerName) + ' · ID ' + esc(r.customerID)],
+        ['Phone', esc(meta.customerPhone || '–')], ['Terminal ID', esc(r.terminalID || '–')],
+        ['Biller ID', esc(r.billerID || '–')], ['Channel', esc(r.channelName)], ['Narrative', esc(r.narrative)],
+        ['Total sent to Pay1', 'NGN ' + money(r.totalAmount) + (Number(r.totalAmount) === Number(p.billTotal) ? ' <span class="small">(same as the bill)</span>' : ' <b style="color:var(--bad)">bill says ' + money(p.billTotal) + '</b>')]
+      ].map(function (x) { return '<tr><th>' + x[0] + '</th><td>' + x[1] + '</td></tr>'; }).join('') + '</table>';
+      html += '<div class="scroll"><table class="list" style="cursor:default"><thead><tr><th>Item</th><th>Pay1 department</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th><th>Item code</th></tr></thead><tbody>' +
+        r.lines.map(function (l) {
+          return '<tr><td>' + esc(l.Description) + '</td><td>' + (l.Department ? esc(l.Department) : '<b style="color:var(--bad)">not mapped</b>') +
+            '</td><td class="num">' + esc(l.Quantity) + '</td><td class="num">' + money(l.UnitPrice) + '</td><td class="num">' + money(l.Amount) +
+            '</td><td class="small">' + esc(l.ItemCode) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+      html += '<details><summary>Show the exact request for Pay1</summary><pre>' + esc(JSON.stringify(r, null, 2)) + '</pre></details>';
+      box.innerHTML = html;
+      box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }).catch(function (e) { box.innerHTML = '<div class="msg bad">' + esc((e && e.message) || 'Preview failed') + '</div>'; if (e && e.login) fail(e); });
+  }
 })();
 </script>
 </body>
