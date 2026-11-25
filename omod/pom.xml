@@ -139,6 +139,12 @@
 				<directory>src/main/resources</directory>
 				<filtering>true</filtering>
 			</resource>
+			<!-- MediHealth: web pages served at /<webapp>/moduleResources/billing/... -->
+			<resource>
+				<directory>src/main/webapp</directory>
+				<filtering>false</filtering>
+				<targetPath>web/module</targetPath>
+			</resource>
 		</resources>
 
 		<testResources>
