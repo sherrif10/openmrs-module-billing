@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pay1 connection</title>
+<style>
+  :root { --brand:#005d5d; --brand-dark:#004144; --ok:#198038; --ok-bg:#defbe6; --bad:#da1e28; --bad-bg:#fff1f1;
+          --wait:#8a6a00; --wait-bg:#fcf4d6; --ink:#161616; --muted:#525252; --line:#e0e0e0; --bg:#f4f4f4; --card:#fff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"IBM Plex Sans","Segoe UI",Roboto,Arial,sans-serif; color:var(--ink); background:var(--bg); font-size:14px; }
+  header { background:var(--brand); color:#fff; padding:12px 16px; display:flex; align-items:center; gap:16px; }
+  header a { color:#fff; text-decoration:none; opacity:.9; font-size:13px; }
+  header h1 { font-size:16px; font-weight:600; margin:0; flex:1; }
+  main { max-width:880px; margin:0 auto; padding:20px 16px 48px; }
+  .card { background:var(--card); border:1px solid var(--line); padding:20px; margin-bottom:16px; }
+  h2 { font-size:15px; margin:0 0 4px; }
+  p.hint { color:var(--muted); margin:0 0 16px; font-size:13px; line-height:1.45; }
+  .status { display:flex; align-items:center; gap:14px; padding:16px 20px; border-left:6px solid var(--line); }
+  .status .dot { width:14px; height:14px; border-radius:50%; background:#a8a8a8; flex:none; }
+  .status b { font-size:16px; display:block; }
+  .status span { color:var(--muted); font-size:13px; }
+  .status.ok { border-left-color:var(--ok); background:var(--ok-bg); } .status.ok .dot { background:var(--ok); }
+  .status.bad { border-left-color:var(--bad); background:var(--bad-bg); } .status.bad .dot { background:var(--bad); }
+  .status.wait { border-left-color:var(--wait); background:var(--wait-bg); } .status.wait .dot { background:var(--wait); animation:pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity:.3; } }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px 16px; }
+  @media (max-width:640px) { .grid { grid-template-columns:1fr; } }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input { width:100%; padding:10px 12px; border:none; border-bottom:1px solid #8d8d8d; background:#f4f4f4; font:inherit; color:var(--ink); }
+  input:focus { outline:2px solid var(--brand); outline-offset:-2px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+  button { font:inherit; padding:10px 18px; border:1px solid var(--brand); background:var(--brand); color:#fff; cursor:pointer; min-height:40px; }
+  button.secondary { background:#fff; color:var(--brand); }
+  button:disabled { opacity:.5; cursor:default; }
+  button:hover:not(:disabled) { background:var(--brand-dark); color:#fff; }
+  .msg { margin-top:12px; font-size:13px; } .msg.bad { color:var(--bad); } .msg.ok { color:var(--ok); }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:12px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { width:38%; color:var(--muted); font-weight:500; background:#fafafa; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:12px; font-size:12px; font-weight:600; }
+  .pill.PENDING { background:var(--wait-bg); color:var(--wait); } .pill.COMPLETED { background:var(--ok-bg); color:var(--ok); }
+  .pill.REVERSED { background:var(--bad-bg); color:var(--bad); }
+  .hidden { display:none; }
+  code { background:#f2f4f8; padding:1px 5px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pay1 connection</h1>
+  <a id="home" href="#">← Back to MediHealth</a>
+</header>
+<main>
+  <div id="denied" class="card hidden"></div>
+
+  <div id="app" class="hidden">
+    <div class="card status" id="status">
+      <div class="dot"></div>
+      <div><b id="statusTitle">Not tested yet</b><span id="statusText">Press "Test connection" to check that MediHealth can reach Pay1.</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Connection settings</h2>
+      <p class="hint">Given by Pay1 when MediHealth is onboarded. The password is stored encrypted on the server and never shown again;
+        leave it empty to keep the saved one.</p>
+      <div class="grid">
+        <div><label for="baseUrl">Pay1 address</label><input id="baseUrl" autocomplete="off" spellcheck="false"></div>
+        <div><label for="billerId">Biller ID</label><input id="billerId" autocomplete="off" spellcheck="false"></div>
+        <div><label for="username">Username</label><input id="username" autocomplete="off" spellcheck="false"></div>
+        <div><label for="password">Password <span id="pwSaved"></span></label><input id="password" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="row">
+        <button id="testBtn">Test connection</button>
+        <button id="saveBtn" class="secondary">Save settings</button>
+      </div>
+      <div id="settingsMsg" class="msg"></div>
+    </div>
+
+    <div class="card hidden" id="detailsCard">
+      <h2>What Pay1 answered</h2>
+      <table id="details"></table>
+    </div>
+
+    <div class="card">
+      <h2>Look up a Pay1 bill</h2>
+      <p class="hint">Type a Pay1 reference or a MediHealth invoice ID to see its status on Pay1 (uses the saved settings).</p>
+      <div class="grid">
+        <div><label for="reference">Reference or invoice ID</label><input id="reference" autocomplete="off" spellcheck="false"></div>
+        <div style="align-self:end"><button id="lookupBtn">Look up</button></div>
+      </div>
+      <div id="lookupMsg" class="msg"></div>
+      <table id="lookup" class="hidden"></table>
+    </div>
+  </div>
+</main>
+<script>
+(function () {
+  var ctx = location.pathname.split('/moduleResources/')[0];
+  var api = ctx + '/ws/rest/v1/billing/api/pay1';
+  var $ = function (id) { return document.getElementById(id); };
+  $('home').href = ctx + '/spa/home';
+
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function call(method, path, body) {
+    return fetch(api + path, {
+      method: method, credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (r.status === 401) throw { login: true };
+        if (!r.ok) throw { message: (typeof j.error === 'string' ? j.error : (j.error && j.error.message)) || ('Error ' + r.status) };
+        return j;
+      });
+    });
+  }
+  function typed() {
+    return { baseUrl: $('baseUrl').value, username: $('username').value, billerId: $('billerId').value, password: $('password').value };
+  }
+  function setStatus(kind, title, text) {
+    $('status').className = 'card status ' + kind;
+    $('statusTitle').textContent = title;
+    $('statusText').textContent = text;
+  }
+  function rows(table, list) {
+    table.innerHTML = list.map(function (r) { return '<tr><th>' + esc(r[0]) + '</th><td>' + r[1] + '</td></tr>'; }).join('');
+  }
+  function fill(s) {
+    $('baseUrl').value = s.baseUrl || '';
+    $('username').value = s.username || '';
+    $('billerId').value = s.billerId || '';
+    $('password').value = '';
+    $('pwSaved').textContent = s.passwordSaved ? '(saved)' : '(not saved yet)';
+  }
+  function busy(on) { ['testBtn', 'saveBtn', 'lookupBtn'].forEach(function (id) { $(id).disabled = on; }); }
+  function fail(e, where) {
+    if (e && e.login) {
+      location.href = ctx + '/spa/login?redirect=' + encodeURIComponent(location.pathname);
+      return;
+    }
+    where.className = 'msg bad';
+    where.textContent = (e && e.message) || 'Something went wrong';
+  }
+
+  call('GET', '/settings').then(function (s) {
+    $('app').classList.remove('hidden');
+    fill(s);
+  }).catch(function (e) {
+    if (e && e.login) return fail(e);
+    $('denied').classList.remove('hidden');
+    $('denied').innerHTML = '<h2>No access</h2><p class="hint">' + esc(e.message) + '</p>';
+  });
+
+  $('testBtn').onclick = function () {
+    busy(true); $('settingsMsg').textContent = '';
+    setStatus('wait', 'Testing…', 'MediHealth is calling Pay1 now.');
+    call('POST', '/test', typed()).then(function (t) {
+      var c = t.check || {};
+      if (t.connected) {
+        setStatus('ok', 'Connected to Pay1', 'Merchant ' + (t.merchant || '?') + ' · answered in ' + c.millis + ' ms · ' + new Date().toLocaleString());
+      } else {
+        setStatus('bad', 'Not connected', c.error || 'Pay1 did not accept the request');
+      }
+      var list = [
+        ['Result', t.connected ? '<span class="pill COMPLETED">Connected</span>' : '<span class="pill REVERSED">Failed</span>'],
+        ['Pay1 address', '<code>' + esc(t.address) + '</code>'],
+        ['Merchant', esc(t.merchant)],
+        ['Biller ID', t.billerId ? esc(t.billerId) : '<i>not set (needed later to send bills)</i>'],
+        ['HTTP status', esc(c.httpStatus || 'no answer')],
+        ['Response time', esc(c.millis) + ' ms'],
+        ['Pay1 message', esc(c.pay1Message || '–')]
+      ];
+      if (c.error) list.push(['Problem', '<span style="color:var(--bad)">' + esc(c.error) + '</span>']);
+      if (t.departments) list.push(['Pay1 departments', esc(t.departments.join(', ') || 'none')]);
+      if (t.services) list.push(['Pay1 services', esc(t.services.join(', ') || 'none')]);
+      rows($('details'), list);
+      $('detailsCard').classList.remove('hidden');
+    }).catch(function (e) {
+      setStatus('bad', 'Not connected', (e && e.message) || 'Test failed');
+      fail(e, $('settingsMsg'));
+    }).then(function () { busy(false); });
+  };
+
+  $('saveBtn').onclick = function () {
+    busy(true); $('settingsMsg').textContent = '';
+    call('POST', '/settings', typed()).then(function (s) {
+      fill(s);
+      $('settingsMsg').className = 'msg ok';
+      $('settingsMsg').textContent = 'Saved.' + (s.problem ? ' Still needed: ' + s.problem + '.' : ' Press "Test connection" to check it.');
+    }).catch(function (e) { fail(e, $('settingsMsg')); }).then(function () { busy(false); });
+  };
+
+  $('lookupBtn').onclick = function () {
+    busy(true); $('lookupMsg').textContent = ''; $('lookup').classList.add('hidden');
+    call('POST', '/lookup', { reference: $('reference').value }).then(function (r) {
+      var t = r.transaction;
+      if (!t) {
+        $('lookupMsg').className = 'msg bad';
+        $('lookupMsg').textContent = (r.check && r.check.error) || 'Not found on Pay1';
+        return;
+      }
+      rows($('lookup'), [
+        ['Status', '<span class="pill ' + esc(t.status) + '">' + esc(t.status) + '</span>'],
+        ['Invoice ID', esc(t.invoiceID)], ['Pay1 reference', esc(t.reference)],
+        ['Amount', esc(t.currency) + ' ' + esc(t.totalAmount)], ['Customer ID', esc(t.customerID)],
+        ['Channel / method', esc(t.channelName) + ' / ' + esc(t.paymentMethod)],
+        ['Payment reference', esc(t.paymentReference || '– (not paid yet)')], ['Created on Pay1', esc(t.createdAt)]
+      ]);
+      $('lookup').classList.remove('hidden');
+    }).catch(function (e) { fail(e, $('lookupMsg')); }).then(function () { busy(false); });
+  };
+  $('reference').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('lookupBtn').click(); });
+})();
+</script>
+</body>
+</html>
